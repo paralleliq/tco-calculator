@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GPU Inference TCO Calculator — Paralleliq</title>
+
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-KSJPQGBGST"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-KSJPQGBGST');
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --purple: #7B35D4;
+      --blue:   #4A6CF7;
+      --cyan:   #00C4C4;
+      --bg:     #0a0a1a;
+      --card:   #111128;
+      --card2:  #16163a;
+      --text:   #e8eaf6;
+      --muted:  #8b8fad;
+      --border: #1e2048;
+      --radius: 12px;
+      --green:  #4ade80;
+      --yellow: #fbbf24;
+      --red:    #f87171;
+      --orange: #fb923c;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; padding: 48px 16px 80px;
+    }
+
+    header { text-align: center; margin-bottom: 40px; }
+    header img { height: 52px; margin-bottom: 24px; }
+    header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 10px; }
+    header p { font-size: 1.05rem; color: var(--muted); max-width: 620px; line-height: 1.6; }
+
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 36px 40px;
+      width: 100%; max-width: 840px;
+      box-shadow: 0 4px 40px rgba(0,0,0,0.4);
+    }
+
+    .section-title {
+      font-size: 0.75rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .form-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+    .form-grid.four  { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+
+    label {
+      font-size: 0.82rem; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .hint { font-size: 0.75rem; font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.7; margin-left: 6px; }
+
+    input, select {
+      padding: 11px 36px 11px 14px; border: 1.5px solid var(--border);
+      border-radius: 8px; font-size: 0.97rem; color: var(--text);
+      background: var(--card2); transition: border-color 0.2s;
+      appearance: none; -webkit-appearance: none; width: 100%; cursor: pointer;
+    }
+    input { padding-right: 14px; }
+    input:focus, select:focus { outline: none; border-color: var(--blue); }
+
+    .select-wrap { position: relative; }
+    .select-wrap::after {
+      content: "▾"; position: absolute; right: 12px; top: 50%;
+      transform: translateY(-50%); color: var(--muted); pointer-events: none; font-size: 0.85rem;
+    }
+
+    .prefix-wrap { position: relative; }
+    .prefix-wrap input { padding-left: 28px; }
+    .prefix-wrap .prefix {
+      position: absolute; left: 12px; top: 50%;
+      transform: translateY(-50%); color: var(--muted); font-size: 0.9rem; pointer-events: none;
+    }
+
+    .suffix-wrap { position: relative; }
+    .suffix-wrap input { padding-right: 52px; }
+    .suffix-wrap .suffix {
+      position: absolute; right: 11px; top: 50%;
+      transform: translateY(-50%); color: var(--muted); font-size: 0.8rem; pointer-events: none;
+    }
+
+    .calc-btn {
+      width: 100%; padding: 14px; border: none; border-radius: 8px;
+      font-size: 1rem; font-weight: 700; cursor: pointer;
+      background: linear-gradient(90deg, var(--purple), var(--blue), var(--cyan));
+      color: #fff; letter-spacing: 0.02em; transition: opacity 0.2s, transform 0.1s;
+    }
+    .calc-btn:hover { opacity: 0.92; }
+    .calc-btn:active { transform: scale(0.99); }
+
+    /* ── Results ── */
+    #results { margin-top: 32px; display: none; }
+    .divider { border: none; border-top: 1px solid var(--border); margin-bottom: 28px; opacity: 0.5; }
+
+    .results-label { font-size: 0.82rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .big-number {
+      font-size: 2.8rem; font-weight: 800;
+      background: linear-gradient(90deg, var(--purple), var(--blue), var(--cyan));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      line-height: 1.1; margin-bottom: 4px;
+    }
+    .big-sub { font-size: 0.9rem; color: var(--muted); margin-bottom: 28px; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+    .kpi {
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px 12px; text-align: center;
+    }
+    .kpi-val { font-size: 1.1rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+    .kpi-lbl { font-size: 0.72rem; color: var(--muted); line-height: 1.3; }
+    .kpi-val.green  { color: var(--green); }
+    .kpi-val.yellow { color: var(--yellow); }
+    .kpi-val.red    { color: var(--red); }
+    .kpi-val.cyan   { color: var(--cyan); }
+    .kpi-val.orange { color: var(--orange); }
+
+    /* ── Cost breakdown table ── */
+    .breakdown-title { font-size: 0.82rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
+
+    .tco-table { width: 100%; border-collapse: collapse; margin-bottom: 28px; font-size: 0.88rem; }
+    .tco-table th {
+      text-align: left; font-size: 0.73rem; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .tco-table th:not(:first-child) { text-align: right; }
+    .tco-table td { padding: 10px 10px; border-bottom: 1px solid rgba(30,32,72,0.5); vertical-align: middle; }
+    .tco-table td:not(:first-child) { text-align: right; }
+    .tco-table tr:last-child td { border-bottom: none; font-weight: 700; font-size: 0.92rem; }
+    .tco-table tr.total-row td { border-top: 1px solid var(--border); padding-top: 14px; }
+    .tco-table .waste { color: var(--red); }
+    .tco-table .saving { color: var(--green); }
+    .dot {
+      display: inline-block; width: 9px; height: 9px; border-radius: 3px;
+      margin-right: 8px; vertical-align: middle;
+    }
+
+    /* ── Stacked bar comparison ── */
+    .compare-section { margin-bottom: 28px; }
+    .compare-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .compare-label { font-size: 0.82rem; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
+    .bar-wrap {
+      display: flex; height: 34px; border-radius: 8px; overflow: hidden;
+      border: 1px solid var(--border); background: var(--card2);
+    }
+    .bar-seg { height: 100%; transition: width 0.4s ease; position: relative; }
+    .bar-seg.compute  { background: var(--purple); }
+    .bar-seg.waste    { background: rgba(248,113,113,0.7); }
+    .bar-seg.ops      { background: var(--blue); }
+    .bar-seg.other    { background: var(--border); }
+    .bar-seg.platform { background: var(--cyan); opacity: 0.7; }
+    .bar-seg.saving   { background: rgba(74,222,128,0.25); border-left: 1px dashed var(--green); }
+    .bar-total { font-size: 0.82rem; font-weight: 700; color: var(--text); margin-top: 4px; }
+
+    .bar-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; margin-bottom: 24px; }
+    .leg-item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--muted); }
+    .leg-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .leg-dot.compute  { background: var(--purple); }
+    .leg-dot.waste    { background: rgba(248,113,113,0.7); }
+    .leg-dot.ops      { background: var(--blue); }
+    .leg-dot.other    { background: var(--border); }
+    .leg-dot.platform { background: var(--cyan); opacity: 0.7; }
+
+    /* ── Break-even ── */
+    .breakeven-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+    .be-card {
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 18px;
+    }
+    .be-card-title { font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .be-val { font-size: 1.5rem; font-weight: 800; color: var(--cyan); line-height: 1.1; margin-bottom: 4px; }
+    .be-sub { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+
+    /* ── Signal ── */
+    .signal-box {
+      background: linear-gradient(135deg, rgba(123,53,212,0.12), rgba(0,196,196,0.08));
+      border: 1px solid rgba(74,108,247,0.25); border-radius: 8px;
+      padding: 16px 18px; margin-bottom: 20px;
+      font-size: 0.9rem; color: var(--text); line-height: 1.6;
+    }
+    .signal-box strong { color: var(--cyan); }
+
+    /* ── Share / lead ── */
+    .share-row { display: flex; gap: 10px; margin-bottom: 20px; }
+    .share-btn {
+      background: transparent; border: 1.5px solid var(--border);
+      color: var(--muted); font-size: 0.88rem; font-weight: 600;
+      padding: 10px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s;
+    }
+    .share-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .share-btn.copied { border-color: var(--green); color: var(--green); }
+
+    .lead-section {
+      background: linear-gradient(135deg, rgba(74,108,247,0.10), rgba(0,196,196,0.06));
+      border: 1px solid rgba(74,108,247,0.3); border-radius: 8px; padding: 18px; margin-bottom: 20px;
+    }
+    .lead-section p { font-size: 0.88rem; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
+    .lead-section p strong { color: var(--text); }
+    .lead-row { display: flex; gap: 8px; }
+    .lead-row input { padding: 10px 14px; flex: 1; font-size: 0.9rem; }
+    .lead-btn {
+      width: auto; padding: 10px 18px; font-size: 0.88rem; white-space: nowrap;
+      flex-shrink: 0; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;
+      background: linear-gradient(90deg, var(--purple), var(--blue)); color: #fff; transition: opacity 0.2s;
+    }
+    .lead-btn:hover { opacity: 0.88; }
+    .lead-ok  { font-size: 0.88rem; color: var(--green); margin-top: 10px; display: none; }
+    .lead-err { font-size: 0.88rem; color: var(--red);   margin-top: 10px; display: none; }
+
+    .caveat { font-size: 0.78rem; color: var(--muted); line-height: 1.55; margin-bottom: 20px; padding: 10px 14px; border-left: 2px solid var(--border); }
+
+    footer { margin-top: 48px; font-size: 0.8rem; color: var(--muted); text-align: center; }
+    footer a { color: var(--blue); text-decoration: none; }
+
+    @media (max-width: 640px) {
+      .card { padding: 24px 16px; }
+      .form-grid, .form-grid.three, .form-grid.four { grid-template-columns: 1fr; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .breakeven-grid { grid-template-columns: 1fr; }
+      .lead-row { flex-direction: column; }
+      .lead-btn { width: 100%; }
+      .bar-legend { gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <img src="logo.png" alt="Paralleliq" />
+  <h1>GPU Inference TCO Calculator</h1>
+  <p>GPU cost is only part of the story. This calculator adds operations, wasted capacity, networking, and storage — then shows what you actually save with an inference control plane.</p>
+</header>
+
+<div class="card">
+
+  <!-- ── Section 1: Infrastructure ── -->
+  <div class="section-title">Infrastructure</div>
+  <div class="form-grid" style="margin-bottom:16px;">
+    <div class="field">
+      <label>GPU Type</label>
+      <div class="select-wrap">
+        <select id="gpu" oninput="onInput()">
+          <option value="t4">NVIDIA T4 — 16 GB</option>
+          <option value="l4">NVIDIA L4 — 24 GB</option>
+          <option value="a10">NVIDIA A10 — 48 GB</option>
+          <option value="a100-40">NVIDIA A100 — 40 GB</option>
+          <option value="a100-80" selected>NVIDIA A100 — 80 GB</option>
+          <option value="h100">NVIDIA H100 — 80 GB</option>
+          <option value="h200">NVIDIA H200 — 141 GB</option>
+          <option value="mi300x">AMD MI300X — 192 GB</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>GPU Count</label>
+      <div class="suffix-wrap">
+        <input type="number" id="gpuCount" value="16" min="1" max="10000" oninput="onInput()" />
+        <span class="suffix">GPUs</span>
+      </div>
+    </div>
+  </div>
+  <div class="form-grid three" style="margin-bottom:28px;">
+    <div class="field">
+      <label>Cloud Provider</label>
+      <div class="select-wrap">
+        <select id="provider" oninput="onInput()">
+          <option value="gcp" selected>Google Cloud</option>
+          <option value="aws">AWS</option>
+          <option value="azure">Azure</option>
+          <option value="coreweave">CoreWeave</option>
+          <option value="lambda">Lambda Labs</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Commitment</label>
+      <div class="select-wrap">
+        <select id="commitment" oninput="onInput()">
+          <option value="1.00">On-demand</option>
+          <option value="0.63" selected>1-yr reserved (~37% off)</option>
+          <option value="0.45">3-yr reserved (~55% off)</option>
+          <option value="0.35">Spot / preemptible (~65% off)</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Avg GPU Utilization</label>
+      <div class="suffix-wrap">
+        <input type="number" id="utilization" value="40" min="1" max="100" oninput="onInput()" />
+        <span class="suffix">%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 2: Workload ── -->
+  <div class="section-title">Workload</div>
+  <div class="form-grid three" style="margin-bottom:28px;">
+    <div class="field">
+      <label>Model Size</label>
+      <div class="select-wrap">
+        <select id="model" oninput="onInput()">
+          <option value="7b">7B / 8B</option>
+          <option value="13b">13B</option>
+          <option value="30b">30B – 40B</option>
+          <option value="70b" selected>70B</option>
+          <option value="180b">180B+</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Requests / Day</label>
+      <div class="select-wrap">
+        <select id="reqPerDay" oninput="onInput()">
+          <option value="10000">10K / day</option>
+          <option value="100000">100K / day</option>
+          <option value="500000" selected>500K / day</option>
+          <option value="1000000">1M / day</option>
+          <option value="5000000">5M / day</option>
+          <option value="10000000">10M / day</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Avg Output Tokens</label>
+      <div class="suffix-wrap">
+        <input type="number" id="outputTok" value="512" min="1" oninput="onInput()" />
+        <span class="suffix">tok</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 3: Operations ── -->
+  <div class="section-title">Operations &amp; People</div>
+  <div class="form-grid three" style="margin-bottom:16px;">
+    <div class="field">
+      <label>Ops Engineers <span class="hint">(FTE for GPU infra)</span></label>
+      <div class="suffix-wrap">
+        <input type="number" id="fte" value="1" min="0" step="0.25" oninput="onInput()" />
+        <span class="suffix">FTE</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>All-in Eng Salary</label>
+      <div class="prefix-wrap">
+        <span class="prefix">$</span>
+        <input type="number" id="salary" value="200000" min="0" step="10000" oninput="onInput()" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Setup / Migration Cost</label>
+      <div class="prefix-wrap">
+        <span class="prefix">$</span>
+        <input type="number" id="setupCost" value="50000" min="0" step="5000" oninput="onInput()" />
+      </div>
+    </div>
+  </div>
+  <div class="form-grid" style="margin-bottom:28px;">
+    <div class="field">
+      <label>Paralleliq Platform Fee <span class="hint">($/GPU/month)</span></label>
+      <div class="prefix-wrap">
+        <span class="prefix">$</span>
+        <input type="number" id="platformFee" value="8" min="0" step="1" oninput="onInput()" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Serverless API Comparison</label>
+      <div class="select-wrap">
+        <select id="apiModel" oninput="onInput()">
+          <option value="0">None — skip comparison</option>
+          <option value="0.18">Together.ai — ~$0.18/1M tokens (7B)</option>
+          <option value="0.88" selected>Together.ai — ~$0.88/1M tokens (70B)</option>
+          <option value="3.50">Together.ai — ~$3.50/1M tokens (180B)</option>
+          <option value="15.00">OpenAI GPT-4o — ~$15/1M tokens</option>
+          <option value="custom">Custom price…</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <button class="calc-btn" onclick="calculate()">Calculate 3-Year TCO</button>
+
+  <!-- ── Results ── -->
+  <div id="results">
+    <hr class="divider" style="margin-top:32px;" />
+
+    <div class="results-label">3-Year Total Cost of Ownership</div>
+    <div class="big-number" id="tco3yr">—</div>
+    <div class="big-sub" id="tcoSub">—</div>
+
+    <!-- KPI row -->
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-val" id="kpiAnnual">—</div>
+        <div class="kpi-lbl">Annual total cost</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val red" id="kpiWaste">—</div>
+        <div class="kpi-lbl">Wasted GPU spend / yr</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val cyan" id="kpiCostPerM">—</div>
+        <div class="kpi-lbl">All-in cost / 1M tokens</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val green" id="kpiSaving3yr">—</div>
+        <div class="kpi-lbl">3-yr savings w/ Paralleliq</div>
+      </div>
+    </div>
+
+    <!-- Cost breakdown table -->
+    <div class="breakdown-title">Annual Cost Breakdown</div>
+    <table class="tco-table">
+      <thead>
+        <tr>
+          <th>Cost Category</th>
+          <th>Annual (current)</th>
+          <th>Annual (w/ Paralleliq)</th>
+          <th>Change</th>
+        </tr>
+      </thead>
+      <tbody id="breakdownBody"></tbody>
+    </table>
+
+    <!-- Stacked bar comparison -->
+    <div class="compare-section">
+      <div class="breakdown-title">3-Year TCO Comparison</div>
+
+      <div class="compare-row">
+        <div class="compare-label" id="barLabel1">Self-hosted (current)</div>
+        <div class="bar-wrap" id="bar1"></div>
+        <div class="bar-total" id="barTotal1">—</div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-label">Self-hosted + Paralleliq</div>
+        <div class="bar-wrap" id="bar2"></div>
+        <div class="bar-total" id="barTotal2">—</div>
+      </div>
+
+      <div class="compare-row" id="apiBarRow" style="display:none;">
+        <div class="compare-label" id="barLabel3">Serverless API</div>
+        <div class="bar-wrap" id="bar3"></div>
+        <div class="bar-total" id="barTotal3">—</div>
+      </div>
+
+      <div class="bar-legend">
+        <div class="leg-item"><div class="leg-dot compute"></div>Compute</div>
+        <div class="leg-item"><div class="leg-dot waste"></div>Wasted capacity</div>
+        <div class="leg-item"><div class="leg-dot ops"></div>Operations (people)</div>
+        <div class="leg-item"><div class="leg-dot other"></div>Networking + storage</div>
+        <div class="leg-item"><div class="leg-dot platform"></div>Paralleliq fee</div>
+      </div>
+    </div>
+
+    <!-- Break-even cards -->
+    <div class="breakeven-grid">
+      <div class="be-card">
+        <div class="be-card-title">Paralleliq Payback Period</div>
+        <div class="be-val" id="paybackPeriod">—</div>
+        <div class="be-sub" id="paybackSub">—</div>
+      </div>
+      <div class="be-card" id="apiBreakevenCard">
+        <div class="be-card-title">Self-host vs. API Break-even</div>
+        <div class="be-val" id="apiBreakeven">—</div>
+        <div class="be-sub" id="apiBreakevenSub">—</div>
+      </div>
+    </div>
+
+    <div class="signal-box" id="signalBox"></div>
+
+    <div class="share-row">
+      <button class="share-btn" id="shareBtn" onclick="copyShareLink()">🔗 Copy shareable link</button>
+    </div>
+
+    <div class="lead-section">
+      <p><strong>Want this as a custom TCO report for your team?</strong><br/>Enter your email and we'll send a formatted PDF with your numbers, recommendations, and a Paralleliq ROI breakdown.</p>
+      <div class="lead-row">
+        <input type="email" id="leadEmail" placeholder="you@company.com" />
+        <button class="lead-btn" onclick="submitLead()">Send Report</button>
+      </div>
+      <div class="lead-ok"  id="leadOk">✓ Sent! Check your inbox.</div>
+      <div class="lead-err" id="leadErr">Something went wrong — email us at info@paralleliq.ai</div>
+    </div>
+
+    <button class="calc-btn" onclick="window.location.href='https://github.com/paralleliq/piqc'">
+      Run a Free Scan — Verify Your Actual Utilization
+    </button>
+
+    <div class="caveat" style="margin-top:16px;">
+      * GPU pricing reflects on-demand public cloud rates; commitment discounts are approximate industry averages.
+      Operations headcount and salary estimates are directional. Paralleliq savings assume 35% waste reduction and
+      40% ops time reduction based on early customer data. Actual results vary.
+    </div>
+  </div>
+</div>
+
+<footer>
+  <p>Built by <a href="https://paralleliq.ai" target="_blank">Paralleliq</a> · <a href="mailto:info@paralleliq.ai">info@paralleliq.ai</a></p>
+</footer>
+
+<script>
+// ── Pricing ($/hr per GPU, on-demand) ─────────────────────────────────────
+const PRICES = {
+  gcp:       { t4: 0.35, l4: 0.54, a10: 0.90, 'a100-40': 2.21, 'a100-80': 3.06, h100: 3.50, h200: 5.00, mi300x: 4.50 },
+  aws:       { t4: 0.53, l4: 0.81, a10: 1.01, 'a100-40': 3.21, 'a100-80': 4.10, h100: 5.12, h200: 6.50, mi300x: 5.00 },
+  azure:     { t4: 0.53, l4: 0.60, a10: 1.10, 'a100-40': 3.40, 'a100-80': 3.67, h100: 5.80, h200: 7.00, mi300x: 5.20 },
+  coreweave: { t4: 0.28, l4: 0.44, a10: 0.85, 'a100-40': 2.06, 'a100-80': 2.76, h100: 2.95, h200: 4.25, mi300x: 3.80 },
+  lambda:    { t4: 0.30, l4: 0.50, a10: 0.75, 'a100-40': 1.99, 'a100-80': 2.50, h100: 2.49, h200: 3.90, mi300x: 3.50 },
+};
+
+const MODEL_WEIGHTS_GB = { '7b': 14, '13b': 26, '30b': 60, '70b': 140, '180b': 360 };
+
+// Networking: ~0.5 KB per token output, egress $0.09/GB
+const EGRESS_GB_PER_TOKEN = 0.0000005;
+const EGRESS_PRICE = 0.09;
+
+// Storage: model replicated across replicas (~2 copies avg)
+const STORAGE_PRICE_PER_GB = 0.023; // $/GB/month
+
+// Paralleliq impact factors
+const PARALLELIQ_WASTE_REDUCTION   = 0.35; // 35% of wasted spend recovered
+const PARALLELIQ_OPS_REDUCTION     = 0.40; // 40% reduction in ops time
+const PARALLELIQ_UTIL_IMPROVEMENT  = 0.15; // +15 percentage points on utilization
+
+function fmtM(n) {
+  if (n >= 1e9) return `$${(n/1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n/1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${Math.round(n).toLocaleString()}`;
+  return `$${Math.round(n)}`;
+}
+
+function fmtChange(delta) {
+  if (delta === 0) return '—';
+  const sign = delta < 0 ? '▼ ' : '▲ ';
+  const cls  = delta < 0 ? 'saving' : 'waste';
+  return `<span class="${cls}">${sign}${fmtM(Math.abs(delta))}/yr</span>`;
+}
+
+function renderBar(barId, segments, maxTotal) {
+  const bar = document.getElementById(barId);
+  bar.innerHTML = segments.map(({ cls, value }) => {
+    const pct = maxTotal > 0 ? Math.max(0, value / maxTotal * 100) : 0;
+    return `<div class="bar-seg ${cls}" style="width:${pct.toFixed(1)}%"></div>`;
+  }).join('');
+}
+
+function calculate() {
+  const gpu         = document.getElementById('gpu').value;
+  const gpuCount    = parseInt(document.getElementById('gpuCount').value) || 1;
+  const provider    = document.getElementById('provider').value;
+  const commitment  = parseFloat(document.getElementById('commitment').value) || 1;
+  const utilPct     = parseFloat(document.getElementById('utilization').value) || 40;
+  const model       = document.getElementById('model').value;
+  const reqPerDay   = parseInt(document.getElementById('reqPerDay').value) || 500000;
+  const outputTok   = parseInt(document.getElementById('outputTok').value) || 512;
+  const fte         = parseFloat(document.getElementById('fte').value) || 0;
+  const salary      = parseFloat(document.getElementById('salary').value) || 200000;
+  const setupCost   = parseFloat(document.getElementById('setupCost').value) || 0;
+  const platformFee = parseFloat(document.getElementById('platformFee').value) || 8;
+  const apiPricePerM = parseFloat(document.getElementById('apiModel').value) || 0;
+
+  const YEARS = 3;
+  const HOURS = 8760;
+
+  // ── Annual compute ─────────────────────────────────────────────────────
+  const baseHourly        = (PRICES[provider][gpu] || 0) * gpuCount;
+  const hourlyAfterCommit = baseHourly * commitment;
+  const annualCompute     = hourlyAfterCommit * HOURS;
+
+  // ── Waste (idle GPU spend) ─────────────────────────────────────────────
+  const wasteFraction  = Math.max(0, (1 - utilPct / 100));
+  const annualWaste    = annualCompute * wasteFraction;
+
+  // ── Operations ────────────────────────────────────────────────────────
+  const annualOps = fte * salary;
+
+  // ── Networking ────────────────────────────────────────────────────────
+  const annualTokens   = reqPerDay * 365 * outputTok;
+  const annualEgressGb = annualTokens * EGRESS_GB_PER_TOKEN;
+  const annualNetwork  = annualEgressGb * EGRESS_PRICE;
+
+  // ── Storage ───────────────────────────────────────────────────────────
+  const modelGb      = MODEL_WEIGHTS_GB[model] || 70;
+  const storageGb    = modelGb * 2; // 2 replica copies on average
+  const annualStorage = storageGb * STORAGE_PRICE_PER_GB * 12;
+
+  // ── Setup (amortised over 3 years) ────────────────────────────────────
+  const annualSetup = setupCost / YEARS;
+
+  // ── Total current ─────────────────────────────────────────────────────
+  const annualOther   = annualNetwork + annualStorage + annualSetup;
+  const annualTotal   = annualCompute + annualOps + annualOther;
+  const tco3yr        = annualTotal * YEARS;
+
+  // ── Paralleliq scenario ───────────────────────────────────────────────
+  const wasteSaving   = annualWaste * PARALLELIQ_WASTE_REDUCTION;
+  const opsSaving     = annualOps   * PARALLELIQ_OPS_REDUCTION;
+  const annualPlatform = platformFee * gpuCount * 12;
+  const annualTotalPiq = annualTotal - wasteSaving - opsSaving + annualPlatform;
+  const tco3yrPiq     = annualTotalPiq * YEARS;
+  const saving3yr     = tco3yr - tco3yrPiq;
+
+  // ── Cost per 1M tokens (all-in) ───────────────────────────────────────
+  const costPerM = annualTokens > 0 ? (annualTotal / (annualTokens / 1e6)) : 0;
+  const costPerMPiq = annualTokens > 0 ? (annualTotalPiq / (annualTokens / 1e6)) : 0;
+
+  // ── Headline ──────────────────────────────────────────────────────────
+  document.getElementById('tco3yr').textContent  = fmtM(tco3yr);
+  document.getElementById('tcoSub').textContent  =
+    `3-year all-in cost · ${gpuCount} × ${gpu.toUpperCase()} · ${utilPct}% utilization · ${fte} ops FTE`;
+
+  document.getElementById('kpiAnnual').textContent   = fmtM(annualTotal) + '/yr';
+  document.getElementById('kpiWaste').textContent    = fmtM(annualWaste) + '/yr';
+  document.getElementById('kpiCostPerM').textContent = `$${costPerM.toFixed(2)}`;
+  document.getElementById('kpiSaving3yr').textContent = fmtM(saving3yr);
+  document.getElementById('kpiSaving3yr').className  = 'kpi-val ' + (saving3yr > 0 ? 'green' : 'yellow');
+
+  // ── Breakdown table ───────────────────────────────────────────────────
+  const rows = [
+    { label: 'Compute (GPU hours)', col: 'compute',  cur: annualCompute,  piq: annualCompute - wasteSaving, dot: '--purple' },
+    { label: 'Wasted capacity (idle GPUs)', col: 'waste', cur: annualWaste, piq: annualWaste - wasteSaving, dot: 'rgba(248,113,113,0.7)', isWaste: true },
+    { label: 'Operations (people)',  col: 'ops',     cur: annualOps,      piq: annualOps - opsSaving,       dot: '--blue' },
+    { label: 'Networking & storage', col: 'other',   cur: annualOther,    piq: annualOther,                 dot: '--border' },
+    { label: 'Paralleliq platform',  col: 'platform',cur: 0,              piq: annualPlatform,              dot: '--cyan' },
+  ];
+
+  const tableRows = rows.map(r => {
+    const delta = r.piq - r.cur;
+    const dotStyle = r.dot.startsWith('--') ? `background:var(${r.dot})` : `background:${r.dot}`;
+    return `
+      <tr>
+        <td><span class="dot" style="${dotStyle}"></span>${r.label}</td>
+        <td class="${r.isWaste ? 'waste' : ''}">${r.cur === 0 ? '—' : fmtM(r.cur) + '/yr'}</td>
+        <td>${fmtM(r.piq)}/yr</td>
+        <td>${fmtChange(delta)}</td>
+      </tr>`;
+  });
+
+  // Total row
+  tableRows.push(`
+    <tr class="total-row">
+      <td>Total (annual)</td>
+      <td>${fmtM(annualTotal)}/yr</td>
+      <td class="saving">${fmtM(annualTotalPiq)}/yr</td>
+      <td><span class="saving">▼ ${fmtM(annualTotal - annualTotalPiq)}/yr</span></td>
+    </tr>`);
+  document.getElementById('breakdownBody').innerHTML = tableRows.join('');
+
+  // ── Stacked bars ──────────────────────────────────────────────────────
+  const apiAnnual = apiPricePerM > 0 ? (annualTokens / 1e6) * apiPricePerM : 0;
+  const api3yr    = apiAnnual * YEARS;
+
+  const maxBar = Math.max(tco3yr, tco3yrPiq, api3yr || 0) * 1.05;
+
+  renderBar('bar1', [
+    { cls: 'compute',  value: (annualCompute - annualWaste) * YEARS },
+    { cls: 'waste',    value: annualWaste * YEARS },
+    { cls: 'ops',      value: annualOps * YEARS },
+    { cls: 'other',    value: annualOther * YEARS },
+  ], maxBar);
+
+  renderBar('bar2', [
+    { cls: 'compute',  value: (annualCompute - annualWaste) * YEARS },
+    { cls: 'waste',    value: (annualWaste - wasteSaving) * YEARS },
+    { cls: 'ops',      value: (annualOps - opsSaving) * YEARS },
+    { cls: 'other',    value: annualOther * YEARS },
+    { cls: 'platform', value: annualPlatform * YEARS },
+  ], maxBar);
+
+  document.getElementById('barTotal1').textContent = fmtM(tco3yr) + ' (3-yr)';
+  document.getElementById('barTotal2').textContent = fmtM(tco3yrPiq) + ' (3-yr)  · saves ' + fmtM(saving3yr);
+
+  if (apiPricePerM > 0) {
+    document.getElementById('apiBarRow').style.display = '';
+    renderBar('bar3', [{ cls: 'compute', value: api3yr }], maxBar);
+    document.getElementById('barTotal3').textContent = fmtM(api3yr) + ' (3-yr)';
+  } else {
+    document.getElementById('apiBarRow').style.display = 'none';
+  }
+
+  // ── Payback period ────────────────────────────────────────────────────
+  const monthlySavingPiq  = (wasteSaving + opsSaving) / 12;
+  const monthlyPlatformFee = annualPlatform / 12;
+  const netMonthlySaving  = monthlySavingPiq - monthlyPlatformFee;
+  let paybackText, paybackSub;
+
+  if (netMonthlySaving <= 0) {
+    paybackText = 'N/A';
+    paybackSub  = 'Platform cost exceeds projected savings at current utilization. Increase GPU count or improve utilization to see ROI.';
+  } else {
+    const months = Math.ceil(setupCost > 0 ? (setupCost / netMonthlySaving) : 1);
+    paybackText = months <= 1 ? 'Immediate' : months <= 12 ? `${months} months` : `${(months/12).toFixed(1)} years`;
+    paybackSub  = `Net monthly saving: ${fmtM(netMonthlySaving)}/mo after platform fee. 3-yr net ROI: ${fmtM(saving3yr)}.`;
+  }
+  document.getElementById('paybackPeriod').textContent = paybackText;
+  document.getElementById('paybackSub').textContent    = paybackSub;
+
+  // ── API break-even ────────────────────────────────────────────────────
+  if (apiPricePerM > 0) {
+    // At what monthly request volume does self-hosted cost == API cost?
+    // annualTotal / 12 == (req/mo × outputTok / 1e6) × apiPricePerM
+    const monthlyReqBreakEven = (annualTotalPiq / 12) / (outputTok / 1e6 * apiPricePerM);
+    const currentMonthlyReq   = reqPerDay * 30;
+    const be = document.getElementById('apiBreakeven');
+    const beSub = document.getElementById('apiBreakevenSub');
+
+    if (monthlyReqBreakEven < 1e9) {
+      const beFormatted = monthlyReqBreakEven >= 1e6
+        ? `${(monthlyReqBreakEven/1e6).toFixed(1)}M req/mo`
+        : `${Math.round(monthlyReqBreakEven / 1000)}K req/mo`;
+      be.textContent = beFormatted;
+      if (currentMonthlyReq > monthlyReqBreakEven) {
+        be.className = 'be-val green';
+        beSub.textContent = `You're past break-even. Self-hosting (with Paralleliq) is cheaper than the API at your current volume.`;
+      } else {
+        be.className = 'be-val yellow';
+        const ratio = (monthlyReqBreakEven / currentMonthlyReq).toFixed(1);
+        beSub.textContent = `You need ${ratio}× more traffic to justify self-hosting over the API.`;
+      }
+    } else {
+      be.textContent = 'High volume';
+      be.className = 'be-val yellow';
+      beSub.textContent = 'API may remain cheaper — consider a hybrid approach.';
+    }
+  } else {
+    document.getElementById('apiBreakevenCard').style.display = 'none';
+  }
+
+  // ── Signal box ────────────────────────────────────────────────────────
+  const wastePct = annualTotal > 0 ? (annualWaste / annualTotal * 100) : 0;
+  const opsPct   = annualTotal > 0 ? (annualOps   / annualTotal * 100) : 0;
+  let signal = '';
+
+  if (wastePct >= 40) {
+    signal = `<strong>Wasted capacity is your largest cost driver.</strong> ${wastePct.toFixed(0)}% of your annual spend — ${fmtM(annualWaste)} — is going to idle GPUs. At ${utilPct}% utilization, you're leaving ${fmtM(annualWaste * PARALLELIQ_WASTE_REDUCTION)}/yr on the table that a control plane would recover.`;
+  } else if (opsPct >= 30) {
+    signal = `<strong>Operations is a significant cost center.</strong> ${opsPct.toFixed(0)}% of your TCO is people managing GPU infrastructure. Automating utilization management and alerting reduces this by up to 40%.`;
+  } else if (saving3yr > 100000) {
+    signal = `<strong>Strong ROI case for automation.</strong> Paralleliq recovers ${fmtM(saving3yr)} over 3 years on your fleet — ${fmtM(saving3yr / YEARS)}/yr net savings after platform fees. That's a ${(saving3yr / (annualPlatform * YEARS) ).toFixed(1)}× return on the platform cost.`;
+  } else {
+    signal = `<strong>Your fleet is relatively efficient.</strong> ${fmtM(saving3yr)} in 3-year savings identified. The biggest gains will come as you scale — re-run this calculator at 2× your current GPU count.`;
+  }
+
+  document.getElementById('signalBox').innerHTML = signal;
+  document.getElementById('results').style.display = 'block';
+
+  gtag('event', 'tco_calculate', {
+    gpu, gpu_count: gpuCount, provider, utilization: utilPct,
+    annual_total: Math.round(annualTotal), saving_3yr: Math.round(saving3yr),
+    waste_pct: Math.round(wastePct),
+  });
+}
+
+function onInput() {
+  if (document.getElementById('results').style.display !== 'none') calculate();
+}
+
+// ── Shareable URL ──────────────────────────────────────────────────────────
+function copyShareLink() {
+  const ids = ['gpu','gpuCount','provider','commitment','utilization','model','reqPerDay','outputTok','fte','salary','setupCost','platformFee','apiModel'];
+  const params = new URLSearchParams();
+  ids.forEach(id => params.set(id, document.getElementById(id).value));
+  navigator.clipboard.writeText(`${location.origin}${location.pathname}?${params}`).then(() => {
+    const btn = document.getElementById('shareBtn');
+    btn.textContent = '✓ Copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '🔗 Copy shareable link'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function loadFromUrl() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('gpu')) return false;
+  ['gpu','gpuCount','provider','commitment','utilization','model','reqPerDay','outputTok','fte','salary','setupCost','platformFee','apiModel'].forEach(id => {
+    if (p.has(id)) document.getElementById(id).value = p.get(id);
+  });
+  calculate();
+  return true;
+}
+
+// ── Lead capture ───────────────────────────────────────────────────────────
+async function submitLead() {
+  const email = document.getElementById('leadEmail').value.trim();
+  if (!email || !email.includes('@')) return;
+  const payload = {
+    email,
+    calculator:  'GPU Inference TCO Calculator',
+    gpu:         document.getElementById('gpu').value,
+    gpu_count:   document.getElementById('gpuCount').value,
+    provider:    document.getElementById('provider').value,
+    utilization: document.getElementById('utilization').value,
+    model:       document.getElementById('model').value,
+  };
+  try {
+    const r = await fetch('https://formspree.io/f/xyklnbgy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (r.ok) {
+      document.getElementById('leadOk').style.display  = 'block';
+      document.getElementById('leadErr').style.display = 'none';
+      gtag('event', 'lead_capture', { email_domain: email.split('@')[1], calculator: 'tco' });
+    } else { document.getElementById('leadErr').style.display = 'block'; }
+  } catch { document.getElementById('leadErr').style.display = 'block'; }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+if (!loadFromUrl()) calculate();
+</script>
+
+</body>
+</html>
