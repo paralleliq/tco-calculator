@@ -807,6 +807,8 @@ async function submitLead() {
   const email = document.getElementById('leadEmail').value.trim();
   if (!email || !email.includes('@')) return;
   const payload = {
+    access_key: '169d21e8-3750-4079-97ae-8de5198250d6',
+    subject: 'Lead: GPU Inference TCO Calculator',
     email,
     calculator:  'GPU Inference TCO Calculator',
     gpu:         document.getElementById('gpu').value,
@@ -816,7 +818,7 @@ async function submitLead() {
     model:       document.getElementById('model').value,
   };
   try {
-    const r = await fetch('https://formspree.io/f/xyklnbgy', {
+    const r = await fetch('https://api.web3forms.com/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify(payload),
